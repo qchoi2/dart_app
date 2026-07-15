@@ -11,16 +11,22 @@ import dart_research as dr
 
 
 class DateWindowTests(unittest.TestCase):
-    def test_long_range_is_split_into_contiguous_90_day_windows(self):
+    def test_long_range_is_split_into_calendar_three_month_windows(self):
         windows = dr.date_windows("20260101", "20260714")
 
-        self.assertGreater(len(windows), 1)
-        self.assertEqual(windows[0][0], "20260101")
-        self.assertEqual(windows[-1][1], "20260714")
+        self.assertEqual(windows, [
+            ("20260101", "20260331"),
+            ("20260401", "20260630"),
+            ("20260701", "20260714"),
+        ])
+
+    def test_month_end_windows_are_contiguous_without_duplicates(self):
+        windows = dr.date_windows("20260131", "20260815")
+
         for index, (start, end) in enumerate(windows):
             start_date = datetime.strptime(start, "%Y%m%d").date()
             end_date = datetime.strptime(end, "%Y%m%d").date()
-            self.assertLessEqual((end_date - start_date).days + 1, 90)
+            self.assertLess(start_date, end_date)
             if index:
                 previous_end = datetime.strptime(windows[index - 1][1], "%Y%m%d").date()
                 self.assertEqual((start_date - previous_end).days, 1)
@@ -64,6 +70,11 @@ class SearchTests(unittest.TestCase):
 
         self.assertEqual([item["rcept_dt"] for item in items], ["20260401", "20260101"])
         self.assertEqual(search_window.call_count, 2)
+        called_windows = [(call.args[1], call.args[2]) for call in search_window.call_args_list]
+        self.assertEqual(called_windows, [
+            ("20260101", "20260331"),
+            ("20260401", "20260401"),
+        ])
 
     @patch("dart_research.fetch_document_text")
     @patch("dart_research.search_list")

@@ -29,6 +29,7 @@ import json
 import time
 import zipfile
 import argparse
+from calendar import monthrange
 from datetime import datetime, timedelta
 from urllib.error import HTTPError, URLError
 import urllib.request
@@ -42,7 +43,7 @@ load_dotenv()
 BASE = "https://opendart.fss.or.kr/api"
 # DART 웹 문서 뷰어(사람이 클릭해서 보는 링크)
 VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
-MAX_SEARCH_DAYS_WITHOUT_CORP = 90
+SEARCH_WINDOW_MONTHS = 3
 
 
 class OpenDartAPIError(RuntimeError):
@@ -92,6 +93,15 @@ def _parse_date(value, field_name):
         raise ValueError(f"{field_name}은 YYYYMMDD 형식의 유효한 날짜여야 합니다.") from None
 
 
+def _add_months(value, months):
+    """월말을 보정하면서 날짜에 달력 기준 개월 수를 더한다."""
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
+
 def date_windows(bgn_de, end_de, corp_code=None):
     """회사코드가 없을 때 검색기간을 OpenDART 제한 이내로 나눈다."""
     start = _parse_date(bgn_de, "bgn_de")
@@ -104,7 +114,8 @@ def date_windows(bgn_de, end_de, corp_code=None):
     windows = []
     cursor = start
     while cursor <= end:
-        window_end = min(cursor + timedelta(days=MAX_SEARCH_DAYS_WITHOUT_CORP - 1), end)
+        next_window_start = _add_months(cursor, SEARCH_WINDOW_MONTHS)
+        window_end = min(next_window_start - timedelta(days=1), end)
         windows.append((cursor.strftime("%Y%m%d"), window_end.strftime("%Y%m%d")))
         cursor = window_end + timedelta(days=1)
     return windows
@@ -161,7 +172,7 @@ def search_list(key, bgn_de, end_de, pblntf_ty="B", corp_cls=None,
                 corp_code=None, page_count=100, max_pages=100, pause=0.1):
     """
     기간 내 공시목록을 수집한다. 회사코드가 없고 기간이 3개월을 넘으면
-    OpenDART 제한에 맞춰 최대 90일 구간으로 자동 분할한다.
+    OpenDART 제한에 맞춰 달력 기준 3개월 구간으로 자동 분할한 뒤 결과를 합친다.
     pblntf_ty: A=정기공시 B=주요사항보고 C=발행공시 D=지분공시 E=기타 I=거래소 ...
     corp_cls : Y=유가증권 K=코스닥 N=코넥스 E=기타 (None=전체)
     """

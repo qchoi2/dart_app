@@ -57,7 +57,7 @@ DART_API_KEY=여기에_발급받은_키_입력
 python dart_research.py --keyword 상계납입 --bgn 20260101 --end 20260714 --report 유상증자결정 --report 전환사채 --max-docs 200 --out output/results
 ```
 
-긴 기간은 OpenDART 제한에 맞춰 최대 90일 단위로 자동 검색됩니다. 완료되면 다음 파일이 생성됩니다.
+긴 기간은 OpenDART 제한에 맞춰 달력 기준 3개월씩 자동 검색되고, 각 구간의 결과는 최신순으로 합쳐집니다. 완료되면 다음 파일이 생성됩니다.
 
 - `output/results.csv`: Excel에서 열기 좋은 표
 - `output/results.json`: 프로그램에서 사용하기 좋은 구조화 데이터

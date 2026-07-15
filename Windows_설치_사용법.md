@@ -1,109 +1,133 @@
-# OpenDART MCP 서버 — Windows 설치 & 사용법
+# OpenDART 공시 리서치 — Windows 설치 및 사용법
 
-Claude Desktop에 붙여서, 대화창에서 자연어로 공시 사례를 검색하는 세팅입니다.
-아래 5단계면 끝납니다. (파일: `dart_opendart_server.py` 하나만 있으면 됩니다.)
+이 프로젝트는 금융감독원 OpenDART에서 기업 공시와 재무정보를 검색합니다.
+초보자는 `리서치.bat`으로 직접 검색할 수 있고, Claude Desktop에 연결하면 자연어로 질문할 수 있습니다.
 
----
+## 1. 필요한 파일
 
-## STEP 1. Python 확인 / 설치
+프로젝트 폴더를 통째로 보관하세요. 특히 다음 파일은 서로 같은 폴더에 있어야 합니다.
 
-`시작 → cmd` 실행 후:
+- `dart_opendart_server.py`: Claude가 실행하는 MCP 서버
+- `dart_research.py`: 공시 검색 공통 엔진
+- `env_loader.py`: `.env`를 읽는 도구
+- `.env`: 실제 OpenDART API 키
 
-```
+서버 파일 하나만 다른 폴더로 옮기면 실행되지 않습니다.
+
+## 2. Python 설치
+
+1. <https://www.python.org/downloads/>에서 Python 3.10 이상을 설치합니다.
+2. 설치 첫 화면에서 **Add python.exe to PATH**를 체크합니다.
+3. 명령 프롬프트에서 확인합니다.
+
+```powershell
 python --version
 ```
 
-- `Python 3.10` 이상이 나오면 OK.
-- "인식할 수 없는…" 오류면 <https://www.python.org/downloads/> 에서 설치하고,
-  설치 첫 화면에서 **"Add python.exe to PATH" 체크** 후 설치하세요.
+## 3. 필수 패키지 설치
 
-## STEP 2. MCP 라이브러리 설치
+프로젝트 폴더에서 다음 명령을 실행합니다.
 
-cmd에 붙여넣기:
-
-```
-python -m pip install "mcp[cli]"
+```powershell
+python -m pip install -r requirements.txt
 ```
 
-(그 외 라이브러리는 필요 없습니다.)
+직접 검색 기능은 Python 표준 라이브러리만 사용하지만, Claude 연결에는 `mcp` 패키지가 필요합니다.
 
-## STEP 3. 서버 파일 저장
+## 4. API 키 설정
 
-받은 `dart_opendart_server.py` 를 찾기 쉬운 곳에 저장하세요. 예: `C:\dart\dart_opendart_server.py`
-→ 이 **전체 경로**를 다음 단계에서 씁니다.
-
-## STEP 4. Claude Desktop 설정 파일 편집
-
-Claude Desktop → **Settings(설정) → Developer(개발자) → Edit Config** 클릭
-(그러면 `claude_desktop_config.json` 파일이 열립니다. 위치: `%APPDATA%\Claude\`)
-
-서버 파일과 같은 폴더에 `.env` 파일을 만들고 API 키를 저장하세요.
+1. `.env.example` 파일을 복사해 이름을 `.env`로 바꿉니다.
+2. 발급받은 OpenDART API 키를 입력합니다.
 
 ```dotenv
 DART_API_KEY=여기에_발급받은_키_입력
 ```
 
-그다음 설정 파일 내용을 아래로 만들고 **경로**를 본인 값으로 바꾸세요.
-(경로는 역슬래시 대신 `/` 를 쓰면 오류가 없습니다.)
+`.env`는 Git에서 제외됩니다. 이 파일이나 키를 다른 사람에게 보내지 마세요.
+
+## 5. 직접 검색하기
+
+### 가장 쉬운 방법
+
+`리서치.bat`을 더블클릭합니다. 검색 조건은 `run_research.py` 위쪽에서 바꿀 수 있습니다.
+
+### 원하는 조건을 직접 입력하는 방법
+
+```powershell
+python dart_research.py --keyword 상계납입 --bgn 20260101 --end 20260714 --report 유상증자결정 --report 전환사채 --max-docs 200 --out output/results
+```
+
+긴 기간은 OpenDART 제한에 맞춰 최대 90일 단위로 자동 검색됩니다. 완료되면 다음 파일이 생성됩니다.
+
+- `output/results.csv`: Excel에서 열기 좋은 표
+- `output/results.json`: 프로그램에서 사용하기 좋은 구조화 데이터
+
+## 6. Claude Desktop에 연결하기
+
+### 자동 등록
+
+1. 이 프로젝트를 실행할 Python에 패키지를 설치했는지 확인합니다.
+2. `커넥터등록.bat`을 더블클릭합니다.
+3. 등록이 끝나면 Claude Desktop을 완전히 종료했다가 다시 실행합니다.
+
+등록 스크립트는 현재 실행 중인 Python 경로를 사용하고, 기존 Claude 설정을 같은 폴더에 `.bak`으로 백업합니다.
+설정 JSON이 손상돼 있으면 원본을 덮어쓰지 않고 중단합니다.
+
+Claude 설정 위치를 직접 지정해야 한다면 먼저 환경변수를 설정한 뒤 실행합니다.
+
+```powershell
+$env:CLAUDE_CONFIG_PATH="C:/원하는/경로/claude_desktop_config.json"
+python merge_config.py
+```
+
+### 수동 등록
+
+Claude Desktop의 **Settings → Developer → Edit Config**에서 다음 항목을 추가합니다.
 
 ```json
 {
   "mcpServers": {
     "opendart": {
       "command": "python",
-      "args": ["C:/dart/dart_opendart_server.py"]
+      "args": ["C:/프로젝트/전체경로/dart_opendart_server.py"]
     }
   }
 }
 ```
 
-> 이미 다른 mcpServers 항목이 있다면 `"opendart": { ... }` 블록만 그 안에 추가하세요.
+이미 다른 `mcpServers`가 있다면 `opendart` 항목만 추가합니다.
 
-저장 후 **Claude Desktop을 완전히 종료했다가 다시 실행**합니다.
+## 7. Claude에서 사용할 수 있는 도구
 
-## STEP 5. 작동 확인
+- `search_disclosures`: 기간별 공시 목록 검색
+- `find_keyword_cases`: 공시 본문에서 특정 문구 검색
+- `get_document_text`: 접수번호로 공시 본문 확인
+- `resolve_company`: 회사명이나 종목코드로 회사 찾기
+- `get_financials`: 사업보고서·분기보고서의 주요 재무정보 조회
 
-새 대화에서 물어보세요:
+질문 예시:
 
-> opendart 도구 연결됐어? 쓸 수 있는 도구 알려줘
+> 2026년 상반기 유상증자결정 공시 중 상계납입 사례를 찾아서 회사명, 접수일, DART 링크, 핵심 문구를 표로 정리해줘.
 
-`search_disclosures`, `find_keyword_cases`, `get_document_text` 3개가 보이면 성공입니다.
+> 삼성전자의 2025년 사업보고서 기준 주요 재무정보를 보여줘.
 
----
+본문 검색 결과에는 후보 수, 처리 성공 수, 일치 수, 실패 수가 함께 표시됩니다. 일부 문서가 열람 제한되거나 다운로드에 실패했는지 확인할 수 있습니다.
 
-## 사용법 (자연어로 이렇게 시키면 됩니다)
+## 8. 문제 해결
 
-- **상계납입 사례 검색**
-  > 2025년 1월부터 7월까지 유상증자결정 공시 중 **상계납입** 방식 사례를 찾아서
-  > 회사명 · 접수일 · DART링크 · 핵심문구 표로 정리해줘
-
-- **전환사채 상계 발행**
-  > 2025년 상반기 전환사채 발행 결정 공시에서 '상계'가 들어간 사례 찾아줘
-
-- **주제만 바꿔서 재활용**
-  > 2025년 무상감자 결정 공시 목록 뽑아줘 / 최대주주 변경 사례 찾아줘
-
-- **특정 공시 본문 확인**
-  > 접수번호 20250714000123 공시 본문에서 '상계납입' 관련 문구 보여줘
-
-### 팁: 프로젝트에 고정 지침 넣기
-Claude **프로젝트 → 커스텀 인스트럭션**에 아래처럼 적어두면 매번 형식을 설명할 필요가 없습니다.
-
-> 공시 리서치는 opendart 도구를 사용한다. 결과는 항상
-> [회사명 | 접수일 | 보고서명 | DART링크 | 핵심문구] 표로 정리하고, 건수를 함께 알려준다.
-> 검색 범위가 넓으면 max_docs를 300 이하로 제한해 먼저 결과를 보여준 뒤 확장 여부를 묻는다.
-
----
-
-## 잘 안 될 때
-
-| 증상 | 해결 |
+| 증상 | 해결 방법 |
 |---|---|
-| 도구가 안 보임 | Claude Desktop 완전 종료 후 재실행. 설정 JSON 문법(쉼표/따옴표) 확인 |
-| 서버가 시작 실패 | `"command": "python"` 을 파이썬 전체경로로 교체<br>예: `"C:/Users/이름/AppData/Local/Programs/Python/Python312/python.exe"` |
-| `DART_API_KEY 없음` 오류 | 서버 파일과 같은 폴더의 `.env`에서 `DART_API_KEY` 값 확인 |
-| 결과가 느림/많음 | 자연어로 "max_docs 200으로 제한해서" 라고 요청 |
-| 본문이 비어있는 공시 | 열람제한 문서일 수 있음(자동 건너뜀) |
+| `python`을 찾을 수 없음 | Python을 다시 설치하고 **Add python.exe to PATH**를 체크합니다. |
+| `No module named mcp` | `python -m pip install -r requirements.txt`를 실행합니다. |
+| `DART_API_KEY` 오류 | 프로젝트 폴더의 `.env` 파일과 키 값을 확인합니다. |
+| Claude에서 도구가 안 보임 | Claude Desktop을 완전히 종료한 뒤 다시 실행하고 설정 경로를 확인합니다. |
+| 설정 JSON 오류 | 표시된 행·열의 JSON 문법을 수정합니다. 스크립트는 손상된 설정을 덮어쓰지 않습니다. |
+| 일부 공시 검색 실패 | 결과의 `summary.failed`와 `failures`를 확인합니다. 열람 제한 또는 일시적인 네트워크 문제일 수 있습니다. |
+| SSL 인증서 오류 | Python과 Windows 업데이트를 적용하고 회사 보안 프로그램·프록시 설정을 확인합니다. 인증서 검증을 코드에서 끄지는 마세요. |
+| 회사 검색 결과가 오래됨 | `_corpcode_cache.json`을 삭제하면 즉시 다시 받습니다. 삭제하지 않아도 7일 후 자동 갱신됩니다. |
 
-## ⚠️ 보안
-API 키는 `.env`에만 넣고 코드·문서·Claude 설정에 남기지 마세요. `.env`는 Git에서 제외됩니다.
+## 9. 보안 주의사항
+
+- API 키는 `.env`에만 저장합니다.
+- Claude 설정 파일이나 백업 파일을 프로젝트 폴더에 복사하지 않습니다.
+- 검색 결과에 비공개 메모를 추가했다면 공유 전에 내용을 확인합니다.

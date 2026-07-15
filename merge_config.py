@@ -1,57 +1,98 @@
 # -*- coding: utf-8 -*-
-"""
-앱이 실제로 읽는 MSIX 설정 파일에 opendart 서버를 병합한다.
-(기존 커넥터는 보존, 백업 생성, 결과를 dart 폴더로 복사해 검증 가능하게 함)
-"""
-import os
+"""Claude Desktop 설정에 OpenDART MCP 서버를 안전하게 등록한다."""
+
 import json
+import os
 import shutil
+import sys
+from pathlib import Path
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SERVER = os.path.join(HERE, "dart_opendart_server.py").replace("\\", "/")
-PY = r"C:\Users\3100025\AppData\Local\Programs\Python\Python312\python.exe".replace("\\", "/")
 
-# 앱이 실제로 읽는 설정 파일 (찾기.bat 로 확인된 경로)
-REAL = r"C:\Users\3100025\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
+HERE = Path(__file__).resolve().parent
+SERVER = HERE / "dart_opendart_server.py"
+
+
+def find_config_path():
+    """명시적 경로, 일반 설치, MSIX 설치 순서로 Claude 설정을 찾는다."""
+    override = os.environ.get("CLAUDE_CONFIG_PATH")
+    if override:
+        return Path(override).expanduser().resolve()
+
+    appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+    standard = appdata / "Claude" / "claude_desktop_config.json"
+    if standard.exists():
+        return standard
+
+    local_appdata = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    package_root = local_appdata / "Packages"
+    msix_matches = list(package_root.glob(
+        "Claude_*/*/Roaming/Claude/claude_desktop_config.json"))
+    msix_matches += list(package_root.glob(
+        "Claude_*/LocalCache/Roaming/Claude/claude_desktop_config.json"))
+    existing = sorted({path.resolve() for path in msix_matches if path.is_file()},
+                      key=lambda path: path.stat().st_mtime, reverse=True)
+    return existing[0] if existing else standard
+
+
+def load_config(path):
+    """없는 설정은 새로 시작하되, 손상된 JSON은 절대 덮어쓰지 않는다."""
+    if not path.exists():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as file:
+            config = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Claude 설정 JSON이 올바르지 않습니다({exc.lineno}행 {exc.colno}열). "
+            "파일을 수정한 뒤 다시 실행하세요.") from None
+    if not isinstance(config, dict):
+        raise ValueError("Claude 설정의 최상위 값은 JSON 객체여야 합니다.")
+    return config
+
+
+def save_config(path, config):
+    """기존 파일을 백업하고 임시 파일을 거쳐 원자적으로 저장한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        backup = path.with_suffix(path.suffix + ".bak")
+        shutil.copy2(path, backup)
+        print("백업 생성:", backup)
+
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as file:
+        json.dump(config, file, ensure_ascii=False, indent=2)
+        file.write("\n")
+    os.replace(temporary, path)
+
 
 def main():
-    print("대상 설정 파일:", REAL)
-    if not os.path.exists(REAL):
-        print("[!] 실제 설정 파일이 없습니다. 경로를 다시 확인해야 합니다.")
-        return
+    config_path = find_config_path()
+    print("대상 설정 파일:", config_path)
 
-    with open(REAL, "r", encoding="utf-8") as f:
-        try:
-            cfg = json.load(f) or {}
-        except Exception:
-            cfg = {}
+    try:
+        config = load_config(config_path)
+    except ValueError as exc:
+        print("[오류]", exc)
+        return 1
 
-    shutil.copy(REAL, REAL + ".bak")
-    print("백업 생성:", REAL + ".bak")
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        print("[오류] mcpServers 값은 JSON 객체여야 합니다. 설정 파일을 확인하세요.")
+        return 1
 
-    cfg.setdefault("mcpServers", {})
-    before = list(cfg["mcpServers"].keys())
-    cfg["mcpServers"]["opendart"] = {
-        "command": PY,
-        "args": [SERVER],
+    before = list(servers.keys())
+    servers["opendart"] = {
+        "command": sys.executable,
+        "args": [str(SERVER)],
     }
-
-    with open(REAL, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-
-    # 검증용으로 결과를 dart 폴더에 복사
-    shutil.copy(REAL, os.path.join(HERE, "_real_config_after.json"))
+    save_config(config_path, config)
 
     print("기존 서버:", before)
-    print("현재 서버:", list(cfg["mcpServers"].keys()))
+    print("현재 서버:", list(servers.keys()))
     print("API 키: 프로젝트 .env 파일에서 로드")
-    print("\n완료! 이제 Claude 앱을 완전히 종료(트레이/작업관리자) 후 다시 켜세요.")
+    print("\n완료! Claude Desktop을 완전히 종료한 뒤 다시 실행하세요.")
+    return 0
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        import traceback
-        print("[예외]", e)
-        traceback.print_exc()
+    raise SystemExit(main())

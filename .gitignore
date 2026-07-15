@@ -1,2 +1,13 @@
 .env
 __pycache__/
+*.py[cod]
+.pytest_cache/
+output/
+_corpcode_cache.json
+_real_config_after.json
+dart_results*.csv
+dart_results*.json
+results*.csv
+results*.json
+*_결과.csv
+*_결과.json

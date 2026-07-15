@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-dart_opendart_server.py  —  OpenDART 공시 리서치 MCP 서버 (단일 파일, 자체 완결형)
+dart_opendart_server.py  —  OpenDART 공시 리서치 MCP 서버
 
 Claude Desktop에 연결하면 대화창에서 자연어로:
    "2025년 상반기 유상증자 중 상계납입 사례 찾아줘"
@@ -13,102 +13,25 @@ Claude Desktop에 연결하면 대화창에서 자연어로:
 Claude Desktop 설정(claude_desktop_config.json) 예시는 함께 드린 안내문 참고.
 """
 import os
-import re
 import io
 import json
 import time
 import zipfile
-import urllib.request
 import urllib.parse
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
-from env_loader import load_dotenv
+import dart_research as core
 
-load_dotenv()
-
-BASE = "https://opendart.fss.or.kr/api"
-VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"
-_TAG = re.compile(r"<[^>]+>")
-_WS = re.compile(r"\s+")
+BASE = core.BASE
+VIEWER = core.VIEWER
 
 mcp = FastMCP("opendart")
 
 
 # ----------------------------- 내부 유틸 -----------------------------
 def _key() -> str:
-    k = os.environ.get("DART_API_KEY")
-    if not k:
-        raise RuntimeError("DART_API_KEY 환경변수가 설정되어 있지 않습니다.")
-    return k
-
-
-def _http_get(url: str, timeout: int = 30) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "dart-mcp/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
-
-
-def _search_list(bgn_de, end_de, pblntf_ty="B", corp_cls=None,
-                 corp_code=None, page_count=100, max_pages=100, pause=0.1):
-    items, page = [], 1
-    while page <= max_pages:
-        params = {"crtfc_key": _key(), "bgn_de": bgn_de, "end_de": end_de,
-                  "page_no": page, "page_count": page_count}
-        if pblntf_ty:
-            params["pblntf_ty"] = pblntf_ty
-        if corp_cls:
-            params["corp_cls"] = corp_cls
-        if corp_code:
-            params["corp_code"] = corp_code
-        data = json.loads(_http_get(BASE + "/list.json?" + urllib.parse.urlencode(params)))
-        st = data.get("status")
-        if st == "013":
-            break
-        if st != "000":
-            raise RuntimeError(f"list.json 오류 {st}: {data.get('message')}")
-        items.extend(data.get("list", []))
-        if page >= data.get("total_page", 1):
-            break
-        page += 1
-        time.sleep(pause)
-    return items
-
-
-def _filter_report(items, keywords):
-    if not keywords:
-        return items
-    return [it for it in items if any(k in it.get("report_nm", "") for k in keywords)]
-
-
-def _fetch_text(rcept_no, timeout=30):
-    url = BASE + "/document.xml?" + urllib.parse.urlencode(
-        {"crtfc_key": _key(), "rcept_no": rcept_no})
-    raw = _http_get(url, timeout=timeout)
-    if raw[:2] != b"PK":       # 정상이면 ZIP, 아니면 오류/열람제한
-        return ""
-    parts = []
-    with zipfile.ZipFile(io.BytesIO(raw)) as z:
-        for name in z.namelist():
-            blob = z.read(name)
-            for enc in ("utf-8", "euc-kr", "cp949"):
-                try:
-                    parts.append(blob.decode(enc)); break
-                except UnicodeDecodeError:
-                    continue
-    return _WS.sub(" ", _TAG.sub(" ", "\n".join(parts)))
-
-
-def _snippets(text, keyword, span=60, max_hits=3):
-    hits, start = [], 0
-    for _ in range(max_hits):
-        i = text.find(keyword, start)
-        if i < 0:
-            break
-        a, b = max(0, i - span), min(len(text), i + len(keyword) + span)
-        hits.append("…" + text[a:b].strip() + "…")
-        start = i + len(keyword)
-    return hits
+    return core.get_api_key()
 
 
 # ------------------------------ MCP 도구 ------------------------------
@@ -121,10 +44,10 @@ def search_disclosures(bgn_de: str, end_de: str, pblntf_ty: str = "B",
     report_contains: 보고서명에 포함될 문자열(예 '유상증자결정').
     corp_cls: Y유가 K코스닥 N코넥스 (빈값=전체).
     """
-    items = _search_list(bgn_de, end_de, pblntf_ty=pblntf_ty or None,
-                         corp_cls=corp_cls or None)
+    items = core.search_list(_key(), bgn_de, end_de, pblntf_ty=pblntf_ty or None,
+                             corp_cls=corp_cls or None)
     if report_contains:
-        items = _filter_report(items, [report_contains])
+        items = core.filter_by_report_name(items, [report_contains])
     return [{"corp_name": it.get("corp_name"), "report_nm": it.get("report_nm"),
              "rcept_dt": it.get("rcept_dt"), "rcept_no": it.get("rcept_no"),
              "url": VIEWER.format(it.get("rcept_no"))} for it in items]
@@ -133,31 +56,20 @@ def search_disclosures(bgn_de: str, end_de: str, pblntf_ty: str = "B",
 @mcp.tool()
 def find_keyword_cases(keyword: str, bgn_de: str, end_de: str,
                        report_filters: Optional[list] = None,
-                       pblntf_ty: str = "B", max_docs: int = 200) -> list:
+                       pblntf_ty: str = "B", max_docs: int = 200) -> dict:
     """
     공시 '본문'에서 keyword(예 '상계납입')가 등장하는 사례를 찾는다.
     report_filters: 후보를 줄일 보고서명 키워드(예 ['유상증자결정','전환사채']).
     max_docs: 원문을 열어볼 최대 건수(시간/호출량 제어). 각 결과에 DART링크·본문발췌 포함.
     """
-    items = _search_list(bgn_de, end_de, pblntf_ty=pblntf_ty or None)
-    items = _filter_report(items, report_filters or [])
-    if max_docs:
-        items = items[:max_docs]
-    out = []
-    for it in items:
-        try:
-            text = _fetch_text(it.get("rcept_no"))
-        except Exception:
-            continue
-        if keyword in text:
-            out.append({
-                "corp_name": it.get("corp_name"), "stock_code": it.get("stock_code"),
-                "report_nm": it.get("report_nm"), "rcept_dt": it.get("rcept_dt"),
-                "flr_nm": it.get("flr_nm"), "rcept_no": it.get("rcept_no"),
-                "url": VIEWER.format(it.get("rcept_no")),
-                "snippets": _snippets(text, keyword)})
-        time.sleep(0.2)
-    return out
+    return core.find_keyword_cases(
+        _key(), keyword, bgn_de, end_de,
+        pblntf_ty=pblntf_ty or None,
+        report_filters=report_filters or [],
+        max_docs=max_docs,
+        pause=0.2,
+        verbose=False,
+        include_diagnostics=True)
 
 
 @mcp.tool()
@@ -166,12 +78,13 @@ def get_document_text(rcept_no: str, keyword: str = "") -> dict:
     특정 공시(접수번호)의 본문을 가져온다. keyword를 주면 그 주변 발췌만,
     없으면 앞부분 미리보기(2000자)를 반환.
     """
-    text = _fetch_text(rcept_no)
-    if not text:
-        return {"rcept_no": rcept_no, "error": "본문을 가져올 수 없음(열람제한 등)"}
+    try:
+        text = core.fetch_document_text(_key(), rcept_no)
+    except Exception as exc:
+        return {"rcept_no": rcept_no, "error": str(exc)}
     if keyword:
         return {"rcept_no": rcept_no, "keyword": keyword,
-                "snippets": _snippets(text, keyword, max_hits=8)}
+                "snippets": core.snippets_for(text, keyword, max_hits=8)}
     return {"rcept_no": rcept_no, "preview": text[:2000]}
 
 
@@ -181,21 +94,44 @@ def get_document_text(rcept_no: str, keyword: str = "") -> dict:
 import xml.etree.ElementTree as ET
 
 _CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_corpcode_cache.json")
-_CORP_MAP = None  # {"by_stock": {...}, "by_name": {name: [entries]}, "all": [entries]}
+_CORP_CACHE_MAX_AGE = 7 * 24 * 60 * 60
+_CORP_MAP = None
 
 _REPRT = {
     "사업보고서": "11011", "연간": "11011", "1분기": "11013",
     "반기": "11012", "3분기": "11014",
 }
 _ACCOUNT_TARGETS = {
-    "매출액": ["매출액", "수익(매출액)", "영업수익", "매출"],
-    "영업이익": ["영업이익", "영업이익(손실)"],
-    "당기순이익": ["당기순이익", "당기순이익(손실)", "당기순손익"],
-    "자산총계": ["자산총계"],
-    "부채총계": ["부채총계"],
-    "자본총계": ["자본총계"],
-    "유동자산": ["유동자산"],
-    "유동부채": ["유동부채"],
+    "매출액": {
+        "statements": {"IS", "CIS"},
+        "ids": {"ifrs-full_Revenue"},
+        "names": ["매출액", "수익(매출액)", "영업수익"],
+    },
+    "영업이익": {
+        "statements": {"IS", "CIS"},
+        "ids": {"dart_OperatingIncomeLoss", "ifrs-full_ProfitLossFromOperatingActivities"},
+        "names": ["영업이익", "영업이익(손실)"],
+    },
+    "당기순이익": {
+        "statements": {"IS", "CIS"},
+        "ids": {"ifrs-full_ProfitLoss"},
+        "names": ["당기순이익", "당기순이익(손실)", "당기순손익"],
+    },
+    "자산총계": {
+        "statements": {"BS"}, "ids": {"ifrs-full_Assets"}, "names": ["자산총계"],
+    },
+    "부채총계": {
+        "statements": {"BS"}, "ids": {"ifrs-full_Liabilities"}, "names": ["부채총계"],
+    },
+    "자본총계": {
+        "statements": {"BS"}, "ids": {"ifrs-full_Equity"}, "names": ["자본총계"],
+    },
+    "유동자산": {
+        "statements": {"BS"}, "ids": {"ifrs-full_CurrentAssets"}, "names": ["유동자산"],
+    },
+    "유동부채": {
+        "statements": {"BS"}, "ids": {"ifrs-full_CurrentLiabilities"}, "names": ["유동부채"],
+    },
 }
 
 
@@ -214,12 +150,32 @@ def _to_num(s):
             return s
 
 
+def _select_account(rows, spec):
+    """재무제표 구분과 표준 계정ID를 우선해 가장 적합한 계정을 선택한다."""
+    names = [name.replace(" ", "") for name in spec["names"]]
+    ranked = []
+    for index, row in enumerate(rows):
+        if row.get("sj_div") not in spec["statements"]:
+            continue
+        account_id = row.get("account_id") or ""
+        account_name = (row.get("account_nm") or "").replace(" ", "")
+        score = 0
+        if account_id in spec["ids"]:
+            score += 100
+        if account_name in names:
+            score += 50
+        if score:
+            ranked.append((score, -index, row))
+    return max(ranked, default=(0, 0, None), key=lambda item: (item[0], item[1]))[2]
+
+
 def _build_corp_map():
     """DART corpCode.xml(전체 고유번호 매핑)을 받아 캐시에 저장."""
     url = BASE + "/corpCode.xml?" + urllib.parse.urlencode({"crtfc_key": _key()})
-    raw = _http_get(url, timeout=60)
+    raw = core.http_get(url, timeout=60)
     if raw[:2] != b"PK":
-        raise RuntimeError("corpCode.xml 다운로드 실패")
+        status, message = core._api_error(raw)
+        raise core.OpenDartAPIError(status, message)
     with zipfile.ZipFile(io.BytesIO(raw)) as z:
         xml_bytes = z.read(z.namelist()[0])
     root = ET.fromstring(xml_bytes)
@@ -238,7 +194,10 @@ def _build_corp_map():
 def _corp_entries():
     global _CORP_MAP
     if _CORP_MAP is None:
-        if os.path.exists(_CACHE):
+        cache_is_fresh = (
+            os.path.exists(_CACHE)
+            and time.time() - os.path.getmtime(_CACHE) < _CORP_CACHE_MAX_AGE)
+        if cache_is_fresh:
             try:
                 with open(_CACHE, encoding="utf-8") as f:
                     entries = json.load(f)
@@ -252,7 +211,9 @@ def _corp_entries():
 
 def _resolve(query):
     """회사명 또는 종목코드 -> 후보 리스트. 상장사(종목코드 보유)를 우선."""
-    q = query.strip()
+    q = str(query or "").strip()
+    if not q:
+        raise ValueError("회사명 또는 종목코드를 입력하세요.")
     ents = _corp_entries()
     # 1) 종목코드 정확 일치
     if q.isdigit() and len(q) == 6:
@@ -290,9 +251,19 @@ def get_financials(company: str, year: str, report: str = "사업보고서",
     report: '사업보고서'(연간) | '1분기' | '반기' | '3분기'
     consolidated: True=연결재무제표(CFS), False=별도/개별(OFS)
     full: True면 전체 계정 목록도 함께 반환
-    반환: 매출액·영업이익·당기순이익·자산/부채/자본총계 등 (당기/전기/전전기).
+    반환: 매출액·영업이익·당기순이익·자산/부채/자본총계 등.
+    분기·반기 손익계정의 '당기'는 해당 3개월, '당기누적'은 누적 금액.
     금액 단위는 원(KRW).
     """
+    company = str(company or "").strip()
+    year = str(year or "").strip()
+    report = str(report or "").strip()
+    if not year.isdigit() or len(year) != 4:
+        return {"error": "year는 YYYY 형식의 4자리 연도여야 합니다."}
+    if report not in _REPRT:
+        return {"error": f"지원하지 않는 보고서 종류입니다: {report}",
+                "allowed": list(_REPRT.keys())}
+
     cands = _resolve(company)
     if not cands:
         return {"error": f"'{company}' 에 해당하는 회사를 찾지 못했습니다."}
@@ -305,13 +276,13 @@ def get_financials(company: str, year: str, report: str = "사업보고서",
             return {"ambiguous": True, "candidates": cands[:10],
                     "hint": "여러 회사가 검색됩니다. 종목코드나 정확한 회사명으로 다시 요청하세요."}
     corp = cands[0]
-    reprt_code = _REPRT.get(report.strip(), "11011")
+    reprt_code = _REPRT[report]
 
     def _call(fs_div):
         params = {"crtfc_key": _key(), "corp_code": corp["corp_code"],
                   "bsns_year": str(year), "reprt_code": reprt_code, "fs_div": fs_div}
         url = BASE + "/fnlttSinglAcntAll.json?" + urllib.parse.urlencode(params)
-        return json.loads(_http_get(url))
+        return json.loads(core.http_get(url))
 
     fs_div = "CFS" if consolidated else "OFS"
     data = _call(fs_div)
@@ -325,20 +296,17 @@ def get_financials(company: str, year: str, report: str = "사업보고서",
 
     rows = data.get("list", [])
     key_items = {}
-    for label, targets in _ACCOUNT_TARGETS.items():
-        found = None
-        for t in targets:
-            for r in rows:
-                nm = (r.get("account_nm") or "").replace(" ", "")
-                if t.replace(" ", "") == nm or t.replace(" ", "") in nm:
-                    found = r
-                    break
-            if found:
-                break
+    for label, spec in _ACCOUNT_TARGETS.items():
+        found = _select_account(rows, spec)
         if found:
             key_items[label] = {
+                "account_id": found.get("account_id"),
+                "account_name": found.get("account_nm"),
+                "statement": found.get("sj_div"),
                 "당기": _to_num(found.get("thstrm_amount")),
+                "당기누적": _to_num(found.get("thstrm_add_amount")),
                 "전기": _to_num(found.get("frmtrm_amount")),
+                "전기누적": _to_num(found.get("frmtrm_add_amount")),
                 "전전기": _to_num(found.get("bfefrmtrm_amount")),
             }
 
@@ -350,9 +318,12 @@ def get_financials(company: str, year: str, report: str = "사업보고서",
     }
     if full:
         result["all"] = [{
-            "sj": r.get("sj_nm"), "account": r.get("account_nm"),
+            "sj_div": r.get("sj_div"), "sj": r.get("sj_nm"),
+            "account_id": r.get("account_id"), "account": r.get("account_nm"),
             "당기": _to_num(r.get("thstrm_amount")),
+            "당기누적": _to_num(r.get("thstrm_add_amount")),
             "전기": _to_num(r.get("frmtrm_amount")),
+            "전기누적": _to_num(r.get("frmtrm_add_amount")),
             "전전기": _to_num(r.get("bfefrmtrm_amount")),
         } for r in rows]
     return result

@@ -23,6 +23,9 @@ import urllib.parse
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from env_loader import load_dotenv
+
+load_dotenv()
 
 BASE = "https://opendart.fss.or.kr/api"
 VIEWER = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={}"

@@ -4,8 +4,8 @@ run_research.py - 사용자 PC에서 직접 실행하는 상계납입 리서치 
 한글 문자열은 이 .py 안에만 두어(파이썬이 UTF-8로 안전하게 읽음) 배치 인코딩 문제를 피한다.
 """
 import os
-import json
 import dart_research as dr
+from env_loader import load_dotenv
 
 # ---- 검색 조건 (필요하면 여기 값만 바꾸면 됩니다) ----
 KEYWORD = "상계납입"
@@ -18,16 +18,7 @@ OUT = "상계납입_결과"     # 결과 파일 이름(확장자 제외)
 
 
 def load_key():
-    # 설치 때 저장된 Claude 설정에서 키를 재사용 (별도 노출 방지)
-    try:
-        p = os.path.join(os.environ["APPDATA"], "Claude", "claude_desktop_config.json")
-        with open(p, encoding="utf-8") as f:
-            cfg = json.load(f)
-        k = cfg["mcpServers"]["opendart"]["env"]["DART_API_KEY"]
-        if k:
-            return k
-    except Exception:
-        pass
+    load_dotenv()
     return os.environ.get("DART_API_KEY", "")
 
 

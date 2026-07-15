@@ -14,23 +14,6 @@ PY = r"C:\Users\3100025\AppData\Local\Programs\Python\Python312\python.exe".repl
 # 앱이 실제로 읽는 설정 파일 (찾기.bat 로 확인된 경로)
 REAL = r"C:\Users\3100025\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
 
-# 이전에 넣어둔(엉뚱한 위치) 설정에서 키를 재사용
-OLD = os.path.join(os.environ.get("APPDATA", ""), "Claude", "claude_desktop_config.json")
-
-
-def get_key():
-    for p in (REAL, OLD):
-        try:
-            with open(p, encoding="utf-8") as f:
-                c = json.load(f)
-            k = c.get("mcpServers", {}).get("opendart", {}).get("env", {}).get("DART_API_KEY")
-            if k:
-                return k
-        except Exception:
-            pass
-    return ""
-
-
 def main():
     print("대상 설정 파일:", REAL)
     if not os.path.exists(REAL):
@@ -51,7 +34,6 @@ def main():
     cfg["mcpServers"]["opendart"] = {
         "command": PY,
         "args": [SERVER],
-        "env": {"DART_API_KEY": get_key()},
     }
 
     with open(REAL, "w", encoding="utf-8") as f:
@@ -62,7 +44,7 @@ def main():
 
     print("기존 서버:", before)
     print("현재 서버:", list(cfg["mcpServers"].keys()))
-    print("키 등록됨:", "예" if cfg["mcpServers"]["opendart"]["env"]["DART_API_KEY"] else "아니오(비어있음)")
+    print("API 키: 프로젝트 .env 파일에서 로드")
     print("\n완료! 이제 Claude 앱을 완전히 종료(트레이/작업관리자) 후 다시 켜세요.")
 
 
